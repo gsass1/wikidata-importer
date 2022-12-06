@@ -112,9 +112,89 @@ func (wi *WikidataImporter) RunStage1() error {
   return nil
 }
 
+func printSnak(snak *mediawiki.Snak) {
+  fmt.Printf("Property: %s\n", snak.Property)
+  fmt.Printf("Type: %v\n", snak.SnakType)
+  fmt.Printf("Data Type: %v\n", *snak.DataType)
+  if snak.DataValue != nil {
+    fmt.Printf("Data Value: %v\n", snak.DataValue.Value)
+  } else {
+    fmt.Printf("Data Value: nil\n")
+  }
+}
+
 func (wi *WikidataImporter) RunStage2() error {
   log.Printf("Running Stage 2")
-  // TODO
+
+  config := mediawiki.ProcessDumpConfig{
+    URL: wi.url,
+    Path: "dump",
+    Client: wi.httpClient,
+    Progress: func(c context.Context, prog x.Progress) {
+      fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
+    },
+  }
+
+  log.Printf(">Linking statements")
+  err := mediawiki.ProcessWikidataDump(context.Background(), &config, func(c context.Context, entity mediawiki.Entity) errors.E {
+    //fmt.Printf("ID: %v\n", entity.ID)
+    if entity.ID == "Q103" {
+
+    for name, statements := range entity.Claims {
+      fmt.Printf("Claim: %s\n", name)
+      for _, statement := range statements {
+        fmt.Printf("---------------------------\n")
+        fmt.Printf("Statement:\n")
+        fmt.Printf("\tID: %s\n", statement.ID)
+        fmt.Printf("\tMainSnak:\n")
+        printSnak(&statement.MainSnak)
+        fmt.Printf("\tQualifiers:\n")
+        for qualifierName, qualifiers := range statement.Qualifiers {
+          fmt.Printf("Qualifier name: %s\n", qualifierName)
+          for _, qualifier := range qualifiers {
+            printSnak(&qualifier)
+          }
+        }
+        fmt.Printf("---------------------------\n")
+      }
+    }
+
+    }
+
+    // session := wi.driver.NewSession(neo4j.SessionConfig{})
+    // defer session.Close()
+
+    // _, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+    //   for name, statements := range entity.Claims {
+    //     for _, statement := range statements {
+    //       query := fmt.Sprintf(`
+    //       MATCH (start:Entity), (end:Entity)
+    //       WHERE
+    //       start.id = $startId AND
+    //       end.id = $endId
+    //       WITH start, end
+    //       MERGE (start)-[:%s {by: $prop, id: $claimId}]->(end)
+    //       `, name)
+    //       return tx.Run(query, map[string]interface{}{
+    //         "startId": statement.References[0].Sn,
+    //       })
+    //     }
+    //   }
+
+    //   return nil, nil
+    // })
+
+    // if err != nil {
+    //   return errors.Errorf("failed to write entity %v: %v", entity.ID, err)
+    // }
+
+    return nil
+  })
+  if err != nil {
+    return errors.Errorf("error while processing dump: %v", err)
+  }
+
+  // return nil
   return nil
 }
 
