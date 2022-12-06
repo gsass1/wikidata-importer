@@ -139,26 +139,24 @@ func (wi *WikidataImporter) RunStage2() error {
   err := mediawiki.ProcessWikidataDump(context.Background(), &config, func(c context.Context, entity mediawiki.Entity) errors.E {
     //fmt.Printf("ID: %v\n", entity.ID)
     if entity.ID == "Q103" {
-
-    for name, statements := range entity.Claims {
-      fmt.Printf("Claim: %s\n", name)
-      for _, statement := range statements {
-        fmt.Printf("---------------------------\n")
-        fmt.Printf("Statement:\n")
-        fmt.Printf("\tID: %s\n", statement.ID)
-        fmt.Printf("\tMainSnak:\n")
-        printSnak(&statement.MainSnak)
-        fmt.Printf("\tQualifiers:\n")
-        for qualifierName, qualifiers := range statement.Qualifiers {
-          fmt.Printf("Qualifier name: %s\n", qualifierName)
-          for _, qualifier := range qualifiers {
-            printSnak(&qualifier)
+      for name, statements := range entity.Claims {
+        fmt.Printf("Claim: %s\n", name)
+        for _, statement := range statements {
+          fmt.Printf("---------------------------\n")
+          fmt.Printf("Statement:\n")
+          fmt.Printf("\tID: %s\n", statement.ID)
+          fmt.Printf("\tMainSnak:\n")
+          printSnak(&statement.MainSnak)
+          fmt.Printf("\tQualifiers:\n")
+          for qualifierName, qualifiers := range statement.Qualifiers {
+            fmt.Printf("Qualifier name: %s\n", qualifierName)
+            for _, qualifier := range qualifiers {
+              printSnak(&qualifier)
+            }
           }
+          fmt.Printf("---------------------------\n")
         }
-        fmt.Printf("---------------------------\n")
       }
-    }
-
     }
 
     // session := wi.driver.NewSession(neo4j.SessionConfig{})
