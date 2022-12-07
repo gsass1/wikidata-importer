@@ -96,8 +96,12 @@ func (wi *WikidataImporter) RunStage1() error {
 
 		_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
 			extraLabel := []string{"Item", "Property", "Mediainfo"}[entity.Type]
-			return tx.Run(fmt.Sprintf("CREATE (n:%s:Entity { id: $id })", extraLabel), map[string]interface{}{
-				"id": entity.ID,
+			return tx.Run(fmt.Sprintf("CREATE (n:%s:Entity { id: $id, pageId: $pageId, title: $title, label: $label, description: $description })", extraLabel), map[string]interface{}{
+				"id":          entity.ID,
+				"pageId":      entity.PageID,
+				"title":       entity.Title,
+				"labels":      entity.Labels["en"].Value,
+				"description": entity.Descriptions["en"].Value,
 			})
 		})
 
