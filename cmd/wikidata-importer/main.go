@@ -12,6 +12,7 @@ func main() {
 	neo4jUser := flag.String("user", "neo4j", "neo4j user")
 	neo4jPassword := flag.String("password", "1234", "neo4j password")
 	stage := flag.Int("stage", -1, "which stage to run")
+	dumpPath := flag.String("dump", "dump", "path of the dump to load or save")
 
 	flag.Parse()
 
@@ -23,7 +24,7 @@ func main() {
 		Address:  *neo4jAddress,
 		Username: *neo4jUser,
 		Password: *neo4jPassword,
-	})
+	}, *dumpPath)
 	if err != nil {
 		log.Panic(err)
 	}
