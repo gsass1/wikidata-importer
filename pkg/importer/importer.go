@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
@@ -40,6 +41,9 @@ func NewWikidataImporter(config *Neo4JConfig, dumpPath string) (*WikidataImporte
 	if err != nil {
 		return nil, err
 	}
+
+	// LatestWikidataEntitiesRun always returns the bz2 file so we have to do this..
+	url = strings.Trim(url, ".bz2") + ".gz"
 
 	driver, err := neo4j.NewDriver(config.Address, neo4j.BasicAuth(config.Username, config.Password, ""))
 	if err != nil {
@@ -78,39 +82,39 @@ func (wi *WikidataImporter) RunStage0() error {
 func (wi *WikidataImporter) RunStage1() error {
 	log.Printf("Running Stage 1")
 
-	config := mediawiki.ProcessDumpConfig{
-		URL:    wi.url,
-		Path:   wi.dumpPath,
-		Client: wi.httpClient,
+	log.Printf(">Creating entities")
+	processConfig := &mediawiki.ProcessConfig[mediawiki.Entity]{
+		URL:         wi.url,
+		Path:        wi.dumpPath,
+		Client:      wi.httpClient,
+		FileType:    mediawiki.JSONArray,
+		Compression: mediawiki.GZIP,
 		Progress: func(c context.Context, prog x.Progress) {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
 		},
+		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
+			session := wi.driver.NewSession(neo4j.SessionConfig{})
+			defer session.Close()
+
+			_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+				extraLabel := []string{"Item", "Property", "Mediainfo"}[entity.Type]
+				return tx.Run(fmt.Sprintf("CREATE (n:%s:Entity { id: $id, pageId: $pageId, label: $label, description: $description })", extraLabel), map[string]interface{}{
+					"id":          entity.ID,
+					"pageId":      entity.PageID,
+					"label":       entity.Labels["en"].Value,
+					"description": entity.Descriptions["en"].Value,
+				})
+			})
+
+			if err != nil {
+				return errors.Errorf("failed to write entity %v: %v", entity.ID, err)
+			}
+
+			return nil
+		},
 	}
 
-	log.Printf(">Creating entities")
-	err := mediawiki.ProcessWikidataDump(context.Background(), &config, func(c context.Context, entity mediawiki.Entity) errors.E {
-		// fmt.Printf("%v\n", entity.ID)
-
-		session := wi.driver.NewSession(neo4j.SessionConfig{})
-		defer session.Close()
-
-		_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-			extraLabel := []string{"Item", "Property", "Mediainfo"}[entity.Type]
-			return tx.Run(fmt.Sprintf("CREATE (n:%s:Entity { id: $id, pageId: $pageId, title: $title, label: $label, description: $description })", extraLabel), map[string]interface{}{
-				"id":          entity.ID,
-				"pageId":      entity.PageID,
-				"title":       entity.Title,
-				"labels":      entity.Labels["en"].Value,
-				"description": entity.Descriptions["en"].Value,
-			})
-		})
-
-		if err != nil {
-			return errors.Errorf("failed to write entity %v: %v", entity.ID, err)
-		}
-
-		return nil
-	})
+	err := mediawiki.Process(context.Background(), processConfig)
 	if err != nil {
 		return errors.Errorf("error while processing dump: %v", err)
 	}
@@ -134,7 +138,7 @@ func (wi *WikidataImporter) RunStage2() error {
 
 	config := mediawiki.ProcessDumpConfig{
 		URL:    wi.url,
-		Path:   "dump",
+		Path:   wi.dumpPath,
 		Client: wi.httpClient,
 		Progress: func(c context.Context, prog x.Progress) {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
