@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
@@ -80,18 +79,8 @@ func (wi *WikidataImporter) RunStage0() error {
 	return nil
 }
 
-const BatchSize = 10000
-
 func (wi *WikidataImporter) RunStage1() error {
 	log.Printf("Running Stage 1")
-
-	itemBatch := make([]map[string]interface{}, BatchSize)
-	itemBatchIdx := 0
-
-	propertyBatch := make([]map[string]interface{}, BatchSize)
-	propertyBatchIdx := 0
-
-	var lock sync.Mutex
 
 	log.Printf(">Creating constraints")
 	session := wi.driver.NewSession(neo4j.SessionConfig{})
@@ -114,67 +103,21 @@ func (wi *WikidataImporter) RunStage1() error {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
 		},
 		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
-			lock.Lock()
-			// TODO: doesn't include Mediainfo entity type
-			if entity.Type == 0 {
-				itemBatch[itemBatchIdx] = map[string]interface{}{
+			session := wi.driver.NewSession(neo4j.SessionConfig{})
+			defer session.Close()
+
+			_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+				extraLabel := []string{"Item", "Property", "Mediainfo"}[entity.Type]
+				return tx.Run(fmt.Sprintf("CREATE (n:%s:Entity { id: $id, pageId: $pageId, label: $label, description: $description })", extraLabel), map[string]interface{}{
 					"id":          entity.ID,
 					"pageId":      entity.PageID,
 					"label":       entity.Labels["en"].Value,
 					"description": entity.Descriptions["en"].Value,
-				}
-				itemBatchIdx = itemBatchIdx + 1
-			} else if entity.Type == 1 {
-				propertyBatch[propertyBatchIdx] = map[string]interface{}{
-					"id":          entity.ID,
-					"pageId":      entity.PageID,
-					"label":       entity.Labels["en"].Value,
-					"description": entity.Descriptions["en"].Value,
-				}
-				propertyBatchIdx = propertyBatchIdx + 1
-			}
-			lock.Unlock()
-
-			if itemBatchIdx >= BatchSize || propertyBatchIdx >= BatchSize {
-				lock.Lock()
-				defer lock.Unlock()
-				session := wi.driver.NewSession(neo4j.SessionConfig{})
-				defer session.Close()
-
-				_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-					//extraLabel := []string{"Item", "Property", "Mediainfo"}[batch[i].Type]
-
-					// Write items
-					_, err := tx.Run(`
-          UNWIND $batch as props
-          CREATE (n:Item:Entity) SET n = props`,
-						map[string]interface{}{"batch": itemBatch[:itemBatchIdx]})
-
-					if err != nil {
-						return nil, err
-					}
-
-					// Write properties
-					_, err = tx.Run(`
-          UNWIND $batch as props
-          CREATE (n:Property:Entity) SET n = props`,
-						map[string]interface{}{"batch": propertyBatch[:propertyBatchIdx]})
-
-					if err != nil {
-						return nil, err
-					}
-
-					fmt.Printf("Wrote batch: (%d items, %d properties)\n", itemBatchIdx, propertyBatchIdx)
-
-					itemBatchIdx = 0
-					propertyBatchIdx = 0
-
-					return nil, nil
 				})
+			})
 
-				if err != nil {
-					return errors.Errorf("failed to write batch: %v", err)
-				}
+			if err != nil {
+				return errors.Errorf("failed to write entity %v: %v", entity.ID, err)
 			}
 
 			return nil
