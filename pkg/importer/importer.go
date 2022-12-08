@@ -93,6 +93,16 @@ func (wi *WikidataImporter) RunStage1() error {
 
 	var lock sync.Mutex
 
+	log.Printf(">Creating constraints")
+	session := wi.driver.NewSession(neo4j.SessionConfig{})
+	defer session.Close()
+	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+		return tx.Run("CREATE CONSTRAINT ON (n:Entity) ASSERT n.id IS UNIQUE;", map[string]interface{}{})
+	})
+	if err != nil {
+		return fmt.Errorf("Could not create constraints: %v", err)
+	}
+
 	log.Printf(">Creating entities")
 	processConfig := &mediawiki.ProcessConfig[mediawiki.Entity]{
 		URL:         wi.url,
@@ -171,7 +181,7 @@ func (wi *WikidataImporter) RunStage1() error {
 		},
 	}
 
-	err := mediawiki.Process(context.Background(), processConfig)
+	err = mediawiki.Process(context.Background(), processConfig)
 	if err != nil {
 		return errors.Errorf("error while processing dump: %v", err)
 	}
