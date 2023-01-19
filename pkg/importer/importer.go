@@ -189,25 +189,24 @@ func (wi *WikidataImporter) RunStage2() error {
 			//   }
 			// }
 
-			if entity.ID == "Q2013" {
-				for name, statements := range entity.Claims {
-					log.Printf("Claim: %s\n", name)
-					claimId := fmt.Sprintf("%s-%s", entity.ID, name)
+			for name, statements := range entity.Claims {
+				//log.Printf("Claim: %s\n", name)
+				claimId := fmt.Sprintf("%s-%s", entity.ID, name)
 
-					// Create claim node and connect with entity and property node
-					_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-						_, err := tx.Run("CREATE (c:Claim { label: $id, entityId: $entityId, propertyId: $propertyId })",
-							map[string]interface{}{
-								"id":         claimId,
-								"entityId":   entity.ID,
-								"propertyId": name,
-							})
+				// Create claim node and connect with entity and property node
+				_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+					_, err := tx.Run("CREATE (c:Claim { label: $id, entityId: $entityId, propertyId: $propertyId })",
+						map[string]interface{}{
+							"id":         claimId,
+							"entityId":   entity.ID,
+							"propertyId": name,
+						})
 
-						if err != nil {
-							return nil, err
-						}
+					if err != nil {
+						return nil, err
+					}
 
-						return tx.Run(`
+					return tx.Run(`
              MATCH (n:Entity { id: $entityId })
              MATCH (p:Property { id: $propertyId })
              MATCH (c:Claim { label: $claimId })
@@ -215,87 +214,86 @@ func (wi *WikidataImporter) RunStage2() error {
              MERGE (n)-[:HAS_CLAIM]->(c)
              MERGE (p)<-[:USES_PROPERTY]-(c)
              `, map[string]interface{}{
-							"entityId":   entity.ID,
-							"claimId":    claimId,
-							"propertyId": name,
-						})
+						"entityId":   entity.ID,
+						"claimId":    claimId,
+						"propertyId": name,
 					})
+				})
 
-					// Read property label
-					result, err := session.ReadTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-						res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label", map[string]interface{}{
-							"propertyId": name,
-						})
-						if err != nil {
-							return nil, err
-						}
-						singleRecord, err := res.Single()
-						if err != nil {
-							return nil, err
-						}
-						return singleRecord.Values[0].(string), nil
+				// Read property label
+				result, err := session.ReadTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+					res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label", map[string]interface{}{
+						"propertyId": name,
 					})
-
-					propertyLabel := result.(string)
-					relType := propertyLabelToRelationshipType(propertyLabel)
-					//fmt.Printf("%s\n", relType)
-
 					if err != nil {
-						return errors.Errorf("Could not set up claim node: %v", err)
+						return nil, err
 					}
+					singleRecord, err := res.Single()
+					if err != nil {
+						return nil, err
+					}
+					return singleRecord.Values[0].(string), nil
+				})
 
-					for _, statement := range statements {
-						mainSnak := statement.MainSnak
+				propertyLabel := result.(string)
+				relType := propertyLabelToRelationshipType(propertyLabel)
+				//fmt.Printf("%s\n", relType)
 
-						if *mainSnak.DataType == 0 {
-							targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
+				if err != nil {
+					return errors.Errorf("Could not set up claim node: %v", err)
+				}
 
-							_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-								// Connect target entity with claim node
-								_, err := tx.Run(`
+				for _, statement := range statements {
+					mainSnak := statement.MainSnak
+
+					if *mainSnak.DataType == 0 {
+						targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
+
+						_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+							// Connect target entity with claim node
+							_, err := tx.Run(`
                  MATCH (c:Claim { label: $claimId })
                  MATCH (e:Entity { id: $entityId })
                  MERGE (e)-[:IS_TARGET_OF]->(c)
                  `, map[string]interface{}{
-									"claimId":  claimId,
-									"entityId": targetEntity.ID,
-								})
-								if err != nil {
-									return nil, err
-								}
+								"claimId":  claimId,
+								"entityId": targetEntity.ID,
+							})
+							if err != nil {
+								return nil, err
+							}
 
-								// Connect origin and target entity using relType
-								return tx.Run(fmt.Sprintf(`
+							// Connect origin and target entity using relType
+							return tx.Run(fmt.Sprintf(`
                  MATCH (n:Entity { id: $originId })
                  MATCH (e:Entity { id: $targetId })
                  MERGE (n)-[:%s]->(e)
                  `, relType), map[string]interface{}{
-									"originId": entity.ID,
-									"targetId": targetEntity.ID,
-								})
+								"originId": entity.ID,
+								"targetId": targetEntity.ID,
 							})
+						})
 
-							if err != nil {
-								//return errors.Errorf("Could connect target entity with claim node: %v", err)
-								log.Printf("Could connect target entity with claim node: %v", err)
-							}
+						if err != nil {
+							//return errors.Errorf("Could connect target entity with claim node: %v", err)
+							log.Printf("Could connect target entity with claim node: %v", err)
 						}
-
-						// fmt.Printf("---------------------------\n")
-						// fmt.Printf("Statement:\n")
-						// fmt.Printf("\tID: %s\n", statement.ID)
-						// fmt.Printf("\tMainSnak:\n")
-						// printSnak(&statement.MainSnak)
-						// fmt.Printf("\tReferences:\n")
-						// fmt.Printf("\tQualifiers:\n")
-						// for qualifierName, qualifiers := range statement.Qualifiers {
-						//   fmt.Printf("Qualifier name: %s\n", qualifierName)
-						//   for _, qualifier := range qualifiers {
-						//     printSnak(&qualifier)
-						//   }
-						// }
-						// fmt.Printf("---------------------------\n")
 					}
+
+					// fmt.Printf("---------------------------\n")
+					// fmt.Printf("Statement:\n")
+					// fmt.Printf("\tID: %s\n", statement.ID)
+					// fmt.Printf("\tMainSnak:\n")
+					// printSnak(&statement.MainSnak)
+					// fmt.Printf("\tReferences:\n")
+					// fmt.Printf("\tQualifiers:\n")
+					// for qualifierName, qualifiers := range statement.Qualifiers {
+					//   fmt.Printf("Qualifier name: %s\n", qualifierName)
+					//   for _, qualifier := range qualifiers {
+					//     printSnak(&qualifier)
+					//   }
+					// }
+					// fmt.Printf("---------------------------\n")
 				}
 			}
 
