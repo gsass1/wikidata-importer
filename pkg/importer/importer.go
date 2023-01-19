@@ -189,7 +189,7 @@ func (wi *WikidataImporter) RunStage2() error {
 
 			if entity.ID == "Q2013" {
 				for name, statements := range entity.Claims {
-					fmt.Printf("Claim: %s\n", name)
+					log.Printf("Claim: %s\n", name)
 					claimId := fmt.Sprintf("%s-%s", entity.ID, name)
 
 					// Create claim node and connect with entity and property node
@@ -274,7 +274,8 @@ func (wi *WikidataImporter) RunStage2() error {
 							})
 
 							if err != nil {
-								return errors.Errorf("Could connect target entity with claim node: %v", err)
+								//return errors.Errorf("Could connect target entity with claim node: %v", err)
+								log.Printf("Could connect target entity with claim node: %v", err)
 							}
 						}
 
