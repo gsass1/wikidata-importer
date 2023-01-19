@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/hashicorp/go-retryablehttp v0.7.1-0.20211018174820-ff6d014e72d9
+	github.com/mrz1836/go-sanitize v1.2.0
 	github.com/neo4j/neo4j-go-driver/v4 v4.3.8
 	gitlab.com/tozd/go/errors v0.3.0
 	gitlab.com/tozd/go/mediawiki v0.12.0

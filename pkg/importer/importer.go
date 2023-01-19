@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/mrz1836/go-sanitize"
 	"github.com/neo4j/neo4j-go-driver/v4/neo4j"
 	"gitlab.com/tozd/go/errors"
 	"gitlab.com/tozd/go/mediawiki"
@@ -144,7 +145,8 @@ func printSnak(snak *mediawiki.Snak) {
 }
 
 func propertyLabelToRelationshipType(propertyLabel string) string {
-	s := strings.ToUpper(propertyLabel)
+	s := sanitize.AlphaNumeric(propertyLabel, true)
+	s = strings.ToUpper(propertyLabel)
 	return strings.ReplaceAll(s, " ", "_")
 }
 
