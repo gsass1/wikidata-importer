@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/mrz1836/go-sanitize"
@@ -21,6 +22,11 @@ type Neo4JConfig struct {
 	Password string
 }
 
+type ClaimPair struct {
+	startID  string
+	targetID string
+}
+
 type WikidataImporter struct {
 	Config *Neo4JConfig
 
@@ -28,6 +34,9 @@ type WikidataImporter struct {
 	url        string
 	driver     neo4j.Driver
 	dumpPath   string
+	mtx        sync.Mutex
+
+	batchMap map[string][]ClaimPair
 }
 
 func NewWikidataImporter(config *Neo4JConfig, dumpPath string) (*WikidataImporter, error) {
@@ -57,6 +66,7 @@ func NewWikidataImporter(config *Neo4JConfig, dumpPath string) (*WikidataImporte
 		driver:     driver,
 		url:        url,
 		dumpPath:   dumpPath,
+		batchMap:   make(map[string][]ClaimPair),
 	}, nil
 }
 
@@ -164,155 +174,139 @@ func (wi *WikidataImporter) RunStage2() error {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
 		},
 		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
-			session := wi.driver.NewSession(neo4j.SessionConfig{})
-			defer session.Close()
-			//fmt.Printf("ID: %v\n", entity.ID)
-			// if entity.ID == "Q2013" {
-			//   for name, statements := range entity.Claims {
-			//     fmt.Printf("Claim: %s\n", name)
-			//     for _, statement := range statements {
-			//       fmt.Printf("---------------------------\n")
-			//       fmt.Printf("Statement:\n")
-			//       fmt.Printf("\tID: %s\n", statement.ID)
-			//       fmt.Printf("\tMainSnak:\n")
-			//       printSnak(&statement.MainSnak)
-			//       fmt.Printf("\tReferences:\n")
-			//       fmt.Printf("\tQualifiers:\n")
-			//       for qualifierName, qualifiers := range statement.Qualifiers {
-			//         fmt.Printf("Qualifier name: %s\n", qualifierName)
-			//         for _, qualifier := range qualifiers {
-			//           printSnak(&qualifier)
-			//         }
-			//       }
-			//       fmt.Printf("---------------------------\n")
-			//     }
-			//   }
-			// }
+			var claims []ClaimPair
 
-			for name, statements := range entity.Claims {
-				//log.Printf("Claim: %s\n", name)
-				claimId := fmt.Sprintf("%s-%s", entity.ID, name)
-
-				// Create claim node and connect with entity and property node
-				_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-					_, err := tx.Run("CREATE (c:Claim { label: $id, entityId: $entityId, propertyId: $propertyId })",
-						map[string]interface{}{
-							"id":         claimId,
-							"entityId":   entity.ID,
-							"propertyId": name,
-						})
-
-					if err != nil {
-						return nil, err
-					}
-
-					return tx.Run(`
-             MATCH (n:Entity { id: $entityId })
-             MATCH (p:Property { id: $propertyId })
-             MATCH (c:Claim { label: $claimId })
-
-             MERGE (n)-[:HAS_CLAIM]->(c)
-             MERGE (p)<-[:USES_PROPERTY]-(c)
-             `, map[string]interface{}{
-						"entityId":   entity.ID,
-						"claimId":    claimId,
-						"propertyId": name,
-					})
-				})
-
-				// Read property label
-				result, err := session.ReadTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-					res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label", map[string]interface{}{
-						"propertyId": name,
-					})
-					if err != nil {
-						return nil, err
-					}
-					singleRecord, err := res.Single()
-					if err != nil {
-						return nil, err
-					}
-					return singleRecord.Values[0].(string), nil
-				})
-
-				propertyLabel := result.(string)
-				relType := propertyLabelToRelationshipType(propertyLabel)
-				//fmt.Printf("%s\n", relType)
-
-				if err != nil {
-					return errors.Errorf("Could not set up claim node: %v", err)
-				}
-
+			for propertyName, statements := range entity.Claims {
 				for _, statement := range statements {
 					mainSnak := statement.MainSnak
 
-					if *mainSnak.DataType == 0 {
+					if mainSnak.DataType != nil && mainSnak.DataValue != nil && *mainSnak.DataType == 0 {
 						targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
 
-						_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-							// Connect target entity with claim node
-							_, err := tx.Run(`
-                 MATCH (c:Claim { label: $claimId })
-                 MATCH (e:Entity { id: $entityId })
-                 MERGE (e)-[:IS_TARGET_OF]->(c)
-                 `, map[string]interface{}{
-								"claimId":  claimId,
-								"entityId": targetEntity.ID,
-							})
-							if err != nil {
-								return nil, err
-							}
-
-							// Connect origin and target entity using relType
-							return tx.Run(fmt.Sprintf(`
-                 MATCH (n:Entity { id: $originId })
-                 MATCH (e:Entity { id: $targetId })
-                 MERGE (n)-[:%s]->(e)
-                 `, relType), map[string]interface{}{
-								"originId": entity.ID,
-								"targetId": targetEntity.ID,
-							})
-						})
-
-						if err != nil {
-							//return errors.Errorf("Could connect target entity with claim node: %v", err)
-							log.Printf("Could connect target entity with claim node: %v", err)
-						}
+						claims = append(claims, ClaimPair{entity.ID, targetEntity.ID})
 					}
-
-					// fmt.Printf("---------------------------\n")
-					// fmt.Printf("Statement:\n")
-					// fmt.Printf("\tID: %s\n", statement.ID)
-					// fmt.Printf("\tMainSnak:\n")
-					// printSnak(&statement.MainSnak)
-					// fmt.Printf("\tReferences:\n")
-					// fmt.Printf("\tQualifiers:\n")
-					// for qualifierName, qualifiers := range statement.Qualifiers {
-					//   fmt.Printf("Qualifier name: %s\n", qualifierName)
-					//   for _, qualifier := range qualifiers {
-					//     printSnak(&qualifier)
-					//   }
-					// }
-					// fmt.Printf("---------------------------\n")
+				}
+				if len(claims) > 0 {
+					wi.mtx.Lock()
+					_, ok := wi.batchMap[propertyName]
+					if ok {
+						wi.batchMap[propertyName] = append(wi.batchMap[propertyName], claims...)
+					} else {
+						wi.batchMap[propertyName] = claims
+					}
+					wi.mtx.Unlock()
 				}
 			}
 
-			//       session := wi.driver.NewSession(neo4j.SessionConfig{})
-			//       defer session.Close()
-			//       for _, statements := range entity.Claims {
-			//         for _, statement := range statements {
-			//           // WikibaseItem
-			//           if *statement.MainSnak.DataType == 0 {
-			//             if statement.MainSnak.DataValue != nil {
-			//               propertyId := statement.MainSnak.Property
-			//               targetEntity := statement.MainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
+			wi.mtx.Lock()
+			defer wi.mtx.Unlock()
 
-			//               fmt.Printf("%s-[:%s]->%s\n", entity.ID, propertyId, targetEntity.ID)
-			//             }
-			//           }
-			//         }
-			//       }
+			if len(wi.batchMap) >= 10000 {
+				fmt.Printf("%v\n", len(wi.batchMap))
+				log.Printf("Commit!\n")
+				err := wi.commitStage2Batch()
+				if err != nil {
+					log.Printf("%v\n", err)
+					return errors.Errorf("Failed to commit batch: %v", err)
+				}
+				wi.batchMap = make(map[string][]ClaimPair)
+			}
+
 			return nil
+
+			//for name, statements := range entity.Claims {
+			//	//log.Printf("Claim: %s\n", name)
+			//	claimId := fmt.Sprintf("%s-%s", entity.ID, name)
+
+			//	// Create claim node and connect with entity and property node
+			//	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+			//		_, err := tx.Run("CREATE (c:Claim { label: $id, entityId: $entityId, propertyId: $propertyId })",
+			//			map[string]interface{}{
+			//				"id":         claimId,
+			//				"entityId":   entity.ID,
+			//				"propertyId": name,
+			//			})
+
+			//		if err != nil {
+			//			return nil, err
+			//		}
+
+			//		return tx.Run(`
+			//MATCH (n:Entity { id: $entityId })
+			//MATCH (p:Property { id: $propertyId })
+			//MATCH (c:Claim { label: $claimId })
+
+			//MERGE (n)-[:HAS_CLAIM]->(c)
+			//MERGE (p)<-[:USES_PROPERTY]-(c)
+			//`, map[string]interface{}{
+			//			"entityId":   entity.ID,
+			//			"claimId":    claimId,
+			//			"propertyId": name,
+			//		})
+			//	})
+
+			//	// Read property label
+			//	result, err := session.ReadTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+			//		res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label", map[string]interface{}{
+			//			"propertyId": name,
+			//		})
+			//		if err != nil {
+			//			return nil, err
+			//		}
+			//		singleRecord, err := res.Single()
+			//		if err != nil {
+			//			return nil, err
+			//		}
+			//		return singleRecord.Values[0].(string), nil
+			//	})
+
+			//	propertyLabel := result.(string)
+			//	relType := propertyLabelToRelationshipType(propertyLabel)
+			//	//fmt.Printf("%s\n", relType)
+
+			//	if err != nil {
+			//		return errors.Errorf("Could not set up claim node: %v", err)
+			//	}
+
+			//	for _, statement := range statements {
+			//		mainSnak := statement.MainSnak
+
+			//		if mainSnak.DataType != nil && mainSnak.DataValue != nil && *mainSnak.DataType == 0 {
+			//			targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
+
+			//			_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+			//				// Connect target entity with claim node
+			//				_, err := tx.Run(`
+			//MATCH (c:Claim { label: $claimId })
+			//MATCH (e:Entity { id: $entityId })
+			//MERGE (e)-[:IS_TARGET_OF]->(c)
+			//`, map[string]interface{}{
+			//					"claimId":  claimId,
+			//					"entityId": targetEntity.ID,
+			//				})
+			//				if err != nil {
+			//					return nil, err
+			//				}
+
+			//				// Connect origin and target entity using relType
+			//				return tx.Run(fmt.Sprintf(`
+			//MATCH (n:Entity { id: $originId })
+			//MATCH (e:Entity { id: $targetId })
+			//MERGE (n)-[:%s]->(e)
+			//`, relType), map[string]interface{}{
+			//					"originId": entity.ID,
+			//					"targetId": targetEntity.ID,
+			//				})
+			//			})
+
+			//			if err != nil {
+			//				//return errors.Errorf("Could connect target entity with claim node: %v", err)
+			//				log.Printf("Could connect target entity with claim node: %v", err)
+			//			}
+			//		}
+			//	}
+			//}
+			//return nil
 		},
 	}
 
@@ -349,6 +343,42 @@ func (wi *WikidataImporter) RunStage2() error {
 	}
 
 	return nil
+}
+
+func (wi *WikidataImporter) commitStage2Batch() error {
+	session := wi.driver.NewSession(neo4j.SessionConfig{})
+	defer session.Close()
+
+	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
+		for propertyId, pairs := range wi.batchMap {
+			// First get le property name
+			res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label",
+				map[string]interface{}{
+					"propertyId": propertyId,
+				})
+			singleRecord, err := res.Single()
+			if err != nil {
+				log.Printf("%v\n", propertyId)
+				return nil, err
+			}
+			relType := propertyLabelToRelationshipType(singleRecord.Values[0].(string))
+
+			query := fmt.Sprintf(`
+      UNWIND batch AS row
+      MATCH (start:Entity {id: row.startID})
+      MATCH (end:Entity {id: row.endID})
+      MERGE (start)-[:%s]->(end)
+      `, relType)
+
+			return tx.Run(query, map[string]interface{}{
+				"batch": pairs,
+			})
+		}
+
+		return nil, nil
+	})
+
+	return err
 }
 
 func (wi *WikidataImporter) RunStage3() error {
