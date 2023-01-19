@@ -146,7 +146,7 @@ func printSnak(snak *mediawiki.Snak) {
 
 func propertyLabelToRelationshipType(propertyLabel string) string {
 	s := sanitize.AlphaNumeric(propertyLabel, true)
-	s = strings.ToUpper(propertyLabel)
+	s = strings.ToUpper(s)
 	return strings.ReplaceAll(s, " ", "_")
 }
 
