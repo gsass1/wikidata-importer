@@ -23,8 +23,9 @@ type Neo4JConfig struct {
 }
 
 type ClaimPair struct {
-	startID  string
-	targetID string
+	startID    string
+	targetID   string
+	qualifiers map[string][]mediawiki.Snak
 }
 
 type WikidataImporter struct {
@@ -174,16 +175,19 @@ func (wi *WikidataImporter) RunStage2() error {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
 		},
 		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
-			var claims []ClaimPair
+			// if entity.ID != "Q2013" {
+			//   return nil
+			// }
 
 			for propertyName, statements := range entity.Claims {
+				var claims []ClaimPair
 				for _, statement := range statements {
 					mainSnak := statement.MainSnak
 
 					if mainSnak.DataType != nil && mainSnak.DataValue != nil && *mainSnak.DataType == 0 {
 						targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
 
-						claims = append(claims, ClaimPair{entity.ID, targetEntity.ID})
+						claims = append(claims, ClaimPair{entity.ID, targetEntity.ID, statement.Qualifiers})
 					}
 				}
 				if len(claims) > 0 {
@@ -201,8 +205,9 @@ func (wi *WikidataImporter) RunStage2() error {
 			wi.mtx.Lock()
 			defer wi.mtx.Unlock()
 
+			//if len(wi.batchMap) >= 1 {
 			if len(wi.batchMap) >= 10000 {
-				fmt.Printf("%v\n", len(wi.batchMap))
+				//fmt.Printf("%v\n", len(wi.batchMap))
 				log.Printf("Commit!\n")
 				err := wi.commitStage2Batch()
 				if err != nil {
@@ -345,6 +350,15 @@ func (wi *WikidataImporter) RunStage2() error {
 	return nil
 }
 
+func dataValueToString(value interface{}) string {
+	idValue, ok := value.(mediawiki.WikiBaseEntityIDValue)
+	if ok {
+		return idValue.ID
+	}
+
+	return fmt.Sprintf("%v", value)
+}
+
 func (wi *WikidataImporter) commitStage2Batch() error {
 	session := wi.driver.NewSession(neo4j.SessionConfig{})
 	defer session.Close()
@@ -352,7 +366,7 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
 		for propertyId, pairs := range wi.batchMap {
 			// First get le property name
-			res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label",
+			res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label LIMIT 1",
 				map[string]interface{}{
 					"propertyId": propertyId,
 				})
@@ -363,16 +377,48 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 			}
 			relType := propertyLabelToRelationshipType(singleRecord.Values[0].(string))
 
-			query := fmt.Sprintf(`
-      UNWIND batch AS row
-      MATCH (start:Entity {id: row.startID})
-      MATCH (end:Entity {id: row.endID})
-      MERGE (start)-[:%s]->(end)
-      `, relType)
+			var batch []map[string]interface{}
+			for _, pair := range pairs {
+				qualifierMap := make(map[string]interface{})
+				for qualifierName, qualifiers := range pair.qualifiers {
+					for _, qualifier := range qualifiers {
+						if qualifier.DataValue != nil {
+							qualifierFullname := qualifierName
+							res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label LIMIT 1",
+								map[string]interface{}{
+									"propertyId": qualifierName,
+								})
+							singleRecord, err := res.Single()
+							if err == nil {
+								qualifierFullname = singleRecord.Values[0].(string)
+							}
 
-			return tx.Run(query, map[string]interface{}{
-				"batch": pairs,
+							qualifierMap[qualifierFullname] = dataValueToString(qualifier.DataValue.Value)
+						}
+					}
+				}
+
+				batch = append(batch, map[string]interface{}{
+					"startID":    pair.startID,
+					"endID":      pair.targetID,
+					"qualifiers": qualifierMap,
+				})
+			}
+
+			query := `
+      UNWIND $batch AS row
+      MERGE (start:Entity {id: row.startID})
+      MERGE (end:Entity {id: row.endID})
+      MERGE (start)-[r:` + fmt.Sprintf("`%s`", relType) + `]->(end)
+      SET r = row.qualifiers
+      `
+
+			_, err = tx.Run(query, map[string]interface{}{
+				"batch": batch,
 			})
+			if err != nil {
+				log.Printf("Error executing batch: %v", err)
+			}
 		}
 
 		return nil, nil
@@ -383,7 +429,42 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 
 func (wi *WikidataImporter) RunStage3() error {
 	log.Printf("Running Stage 3")
-	// TODO
+
+	processConfig := &mediawiki.ProcessConfig[mediawiki.Entity]{
+		URL:         wi.url,
+		Path:        wi.dumpPath,
+		Client:      wi.httpClient,
+		FileType:    mediawiki.JSONArray,
+		Compression: mediawiki.GZIP,
+		Progress: func(c context.Context, prog x.Progress) {
+			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
+		},
+		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
+			if entity.ID == "Q2013" {
+				for name, statements := range entity.Claims {
+					fmt.Printf("Claim: %s\n", name)
+					for _, statement := range statements {
+						printSnak(&statement.MainSnak)
+						fmt.Printf("Qualifiers:\n")
+						for qualifierName, qualifiers := range statement.Qualifiers {
+							fmt.Printf("Qualifier name: %s\n", qualifierName)
+							for _, qualifier := range qualifiers {
+								printSnak(&qualifier)
+							}
+						}
+						fmt.Printf("---------------------------\n")
+					}
+				}
+			}
+			return nil
+		},
+	}
+
+	err := mediawiki.Process(context.Background(), processConfig)
+	if err != nil {
+		return errors.Errorf("error while processing dump: %v", err)
+	}
+
 	return nil
 }
 
