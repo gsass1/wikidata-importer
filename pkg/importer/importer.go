@@ -203,7 +203,7 @@ func (wi *WikidataImporter) RunStage2() error {
 			defer wi.mtx.Unlock()
 
 			//if len(wi.batchMap) >= 1 {
-			if len(wi.batchMap) >= 10000 {
+			if len(wi.batchMap) >= 500 {
 				//fmt.Printf("%v\n", len(wi.batchMap))
 				log.Printf("Commit!\n")
 				err := wi.commitStage2Batch()
