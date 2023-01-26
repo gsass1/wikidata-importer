@@ -206,7 +206,7 @@ func (wi *WikidataImporter) RunStage2() error {
 			defer wi.mtx.Unlock()
 
 			//if len(wi.batchMap) >= 1 {
-			if len(wi.batchMap) >= 10000 {
+			if len(wi.batchMap) >= 1000 {
 				//fmt.Printf("%v\n", len(wi.batchMap))
 				log.Printf("Commit!\n")
 				err := wi.commitStage2Batch()
@@ -359,6 +359,11 @@ func dataValueToString(value interface{}) string {
 	return fmt.Sprintf("%v", value)
 }
 
+type QualifierPair struct {
+	propertyId string
+	value      string
+}
+
 func (wi *WikidataImporter) commitStage2Batch() error {
 	session := wi.driver.NewSession(neo4j.SessionConfig{})
 	defer session.Close()
@@ -370,6 +375,10 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 				map[string]interface{}{
 					"propertyId": propertyId,
 				})
+			if err != nil {
+				fmt.Printf("Failed to get property name: %v", err)
+				continue
+			}
 			singleRecord, err := res.Single()
 			if err != nil {
 				log.Printf("%v\n", propertyId)
@@ -379,21 +388,15 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 
 			var batch []map[string]interface{}
 			for _, pair := range pairs {
-				qualifierMap := make(map[string]interface{})
+				var qualifierList []map[string]interface{}
 				for qualifierName, qualifiers := range pair.qualifiers {
 					for _, qualifier := range qualifiers {
 						if qualifier.DataValue != nil {
-							qualifierFullname := qualifierName
-							res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label LIMIT 1",
-								map[string]interface{}{
-									"propertyId": qualifierName,
-								})
-							singleRecord, err := res.Single()
-							if err == nil {
-								qualifierFullname = singleRecord.Values[0].(string)
-							}
-
-							qualifierMap[qualifierFullname] = dataValueToString(qualifier.DataValue.Value)
+							//qualifierMap[qualifierFullname] = dataValueToString(qualifier.DataValue.Value)
+							qualifierList = append(qualifierList, map[string]interface{}{
+								"propertyId":     qualifierName,
+								"qualifierValue": dataValueToString(qualifier.DataValue.Value),
+							})
 						}
 					}
 				}
@@ -401,7 +404,7 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 				batch = append(batch, map[string]interface{}{
 					"startID":    pair.startID,
 					"endID":      pair.targetID,
-					"qualifiers": qualifierMap,
+					"qualifiers": qualifierList,
 				})
 			}
 
@@ -410,7 +413,12 @@ func (wi *WikidataImporter) commitStage2Batch() error {
       MERGE (start:Entity {id: row.startID})
       MERGE (end:Entity {id: row.endID})
       MERGE (start)-[r:` + fmt.Sprintf("`%s`", relType) + `]->(end)
-      SET r = row.qualifiers
+      WITH r, row
+      UNWIND row.qualifiers AS qualifier
+      MATCH (p:Property {id: qualifier.propertyId})
+      CALL apoc.create.setRelProperty(r, p.label, qualifier.qualifierValue)
+      YIELD rel
+      RETURN rel
       `
 
 			_, err = tx.Run(query, map[string]interface{}{
