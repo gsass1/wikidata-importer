@@ -175,9 +175,6 @@ func (wi *WikidataImporter) RunStage2() error {
 			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
 		},
 		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
-			// if entity.ID != "Q2013" {
-			//   return nil
-			// }
 
 			for propertyName, statements := range entity.Claims {
 				var claims []ClaimPair
@@ -218,129 +215,8 @@ func (wi *WikidataImporter) RunStage2() error {
 			}
 
 			return nil
-
-			//for name, statements := range entity.Claims {
-			//	//log.Printf("Claim: %s\n", name)
-			//	claimId := fmt.Sprintf("%s-%s", entity.ID, name)
-
-			//	// Create claim node and connect with entity and property node
-			//	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-			//		_, err := tx.Run("CREATE (c:Claim { label: $id, entityId: $entityId, propertyId: $propertyId })",
-			//			map[string]interface{}{
-			//				"id":         claimId,
-			//				"entityId":   entity.ID,
-			//				"propertyId": name,
-			//			})
-
-			//		if err != nil {
-			//			return nil, err
-			//		}
-
-			//		return tx.Run(`
-			//MATCH (n:Entity { id: $entityId })
-			//MATCH (p:Property { id: $propertyId })
-			//MATCH (c:Claim { label: $claimId })
-
-			//MERGE (n)-[:HAS_CLAIM]->(c)
-			//MERGE (p)<-[:USES_PROPERTY]-(c)
-			//`, map[string]interface{}{
-			//			"entityId":   entity.ID,
-			//			"claimId":    claimId,
-			//			"propertyId": name,
-			//		})
-			//	})
-
-			//	// Read property label
-			//	result, err := session.ReadTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-			//		res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label", map[string]interface{}{
-			//			"propertyId": name,
-			//		})
-			//		if err != nil {
-			//			return nil, err
-			//		}
-			//		singleRecord, err := res.Single()
-			//		if err != nil {
-			//			return nil, err
-			//		}
-			//		return singleRecord.Values[0].(string), nil
-			//	})
-
-			//	propertyLabel := result.(string)
-			//	relType := propertyLabelToRelationshipType(propertyLabel)
-			//	//fmt.Printf("%s\n", relType)
-
-			//	if err != nil {
-			//		return errors.Errorf("Could not set up claim node: %v", err)
-			//	}
-
-			//	for _, statement := range statements {
-			//		mainSnak := statement.MainSnak
-
-			//		if mainSnak.DataType != nil && mainSnak.DataValue != nil && *mainSnak.DataType == 0 {
-			//			targetEntity := mainSnak.DataValue.Value.(mediawiki.WikiBaseEntityIDValue)
-
-			//			_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-			//				// Connect target entity with claim node
-			//				_, err := tx.Run(`
-			//MATCH (c:Claim { label: $claimId })
-			//MATCH (e:Entity { id: $entityId })
-			//MERGE (e)-[:IS_TARGET_OF]->(c)
-			//`, map[string]interface{}{
-			//					"claimId":  claimId,
-			//					"entityId": targetEntity.ID,
-			//				})
-			//				if err != nil {
-			//					return nil, err
-			//				}
-
-			//				// Connect origin and target entity using relType
-			//				return tx.Run(fmt.Sprintf(`
-			//MATCH (n:Entity { id: $originId })
-			//MATCH (e:Entity { id: $targetId })
-			//MERGE (n)-[:%s]->(e)
-			//`, relType), map[string]interface{}{
-			//					"originId": entity.ID,
-			//					"targetId": targetEntity.ID,
-			//				})
-			//			})
-
-			//			if err != nil {
-			//				//return errors.Errorf("Could connect target entity with claim node: %v", err)
-			//				log.Printf("Could connect target entity with claim node: %v", err)
-			//			}
-			//		}
-			//	}
-			//}
-			//return nil
 		},
 	}
-
-	// session := wi.driver.NewSession(neo4j.SessionConfig{})
-	// defer session.Close()
-
-	// _, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-	//   for name, statements := range entity.Claims {
-	//     for _, statement := range statements {
-	//       query := fmt.Sprintf(`
-	//       MATCH (start:Entity), (end:Entity)
-	//       WHERE
-	//       start.id = $startId AND
-	//       end.id = $endId
-	//       WITH start, end
-	//       MERGE (start)-[:%s {by: $prop, id: $claimId}]->(end)
-	//       `, name)
-	//       return tx.Run(query, map[string]interface{}{
-	//         "startId": statement.References[0].Sn,
-	//       })
-	//     }
-	//   }
-
-	//   return nil, nil
-	// })
-
-	// if err != nil {
-	//   return errors.Errorf("failed to write entity %v: %v", entity.ID, err)
-	// }
 
 	err := mediawiki.Process(context.Background(), processConfig)
 	if err != nil {
