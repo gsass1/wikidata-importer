@@ -31,12 +31,15 @@ Usage of ./wikidata-importer:
         neo4j connection string (default "neo4j://localhost:7687")
   -password string
         neo4j password (default "1234")
+  -single_stage
+        Only run the selected stage, do not continue
   -stage int
-        which stage to run (default -1)
+        start at stage / which stage to run (default -1)
   -user string
         neo4j user (default "neo4j")
+
 ```
 An average call might therefore look like:
 ```bash
-./wikidata-importer -dump ./data/latest-all.json.gz -neo4j neo4j://localhost:7687 -user neo4j -password 1234
+./wikidata-importer -dump ./data/latest-all.json.gz -neo4j neo4j://localhost:7687 -user neo4j -password 1234 -stage 0 
 ```
