@@ -98,7 +98,7 @@ func (wi *WikidataImporter) RunStage1() error {
 	session := wi.driver.NewSession(neo4j.SessionConfig{})
 	defer session.Close()
 	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-		return tx.Run("CREATE CONSTRAINT ON (n:Entity) ASSERT n.id IS UNIQUE;", map[string]interface{}{})
+		return tx.Run("CREATE CONSTRAINT uniqueId FOR (n:Entity) REQUIRE (n.id) IS UNIQUE;", map[string]interface{}{})
 	})
 	if err != nil {
 		return fmt.Errorf("Could not create constraints: %v", err)
