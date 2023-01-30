@@ -1,4 +1,4 @@
-module git.thm.de/gsas42/wikidata-importer
+module github.com/gsass1/wikidata-importer
 
 go 1.18
 
