@@ -4,7 +4,7 @@ PKG        := go mod vendor
 LDFLAGS    := -w -s
 GOFLAGS    :=
 TAGS       := 
-PKGDIR     := git.thm.de/gsas42/wikidata-importer/cmd/wikidata-importer
+PKGDIR     := github.com/gsass1/wikidata-importer/cmd/wikidata-importer
 
 # Required for globs to work correctly
 SHELL=/bin/bash

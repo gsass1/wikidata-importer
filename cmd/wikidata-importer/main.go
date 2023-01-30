@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"git.thm.de/gsas42/wikidata-importer/pkg/importer"
+	"github.com/gsass1/wikidata-importer/pkg/importer"
 	"log"
 )
 
