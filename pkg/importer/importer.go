@@ -241,11 +241,16 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 
 	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
 		for propertyId, pairs := range wi.batchMap {
-			// First get le property name
+			// Get the property name
 			res, err := tx.Run("MATCH (p:Property { id: $propertyId }) RETURN p.label AS label LIMIT 1",
 				map[string]interface{}{
 					"propertyId": propertyId,
 				})
+			if err != nil {
+				log.Printf("Unable to find property: %v\n", err)
+				continue
+			}
+
 			singleRecord, err := res.Single()
 			if err != nil {
 				log.Printf("%v\n", propertyId)
@@ -305,41 +310,6 @@ func (wi *WikidataImporter) commitStage2Batch() error {
 
 func (wi *WikidataImporter) RunStage3() error {
 	log.Printf("Running Stage 3")
-
-	processConfig := &mediawiki.ProcessConfig[mediawiki.Entity]{
-		URL:         wi.url,
-		Path:        wi.dumpPath,
-		Client:      wi.httpClient,
-		FileType:    mediawiki.JSONArray,
-		Compression: mediawiki.GZIP,
-		Progress: func(c context.Context, prog x.Progress) {
-			fmt.Printf("Progress: %v\nEstimated: %v\n", prog.Percent(), prog.Estimated())
-		},
-		Process: func(c context.Context, entity mediawiki.Entity) errors.E {
-			if entity.ID == "Q2013" {
-				for name, statements := range entity.Claims {
-					fmt.Printf("Claim: %s\n", name)
-					for _, statement := range statements {
-						printSnak(&statement.MainSnak)
-						fmt.Printf("Qualifiers:\n")
-						for qualifierName, qualifiers := range statement.Qualifiers {
-							fmt.Printf("Qualifier name: %s\n", qualifierName)
-							for _, qualifier := range qualifiers {
-								printSnak(&qualifier)
-							}
-						}
-						fmt.Printf("---------------------------\n")
-					}
-				}
-			}
-			return nil
-		},
-	}
-
-	err := mediawiki.Process(context.Background(), processConfig)
-	if err != nil {
-		return errors.Errorf("error while processing dump: %v", err)
-	}
 
 	return nil
 }
