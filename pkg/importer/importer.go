@@ -80,7 +80,17 @@ func (wi *WikidataImporter) RunStage0() error {
 	log.Printf(">Cleaning database")
 
 	_, err := session.WriteTransaction(func(tx neo4j.Transaction) (interface{}, error) {
-		return tx.Run("MATCH (n) DETACH DELETE n;", map[string]interface{}{})
+		_, err := tx.Run("CALL apoc.periodic.iterate('MATCH (n) RETURN n', 'DETACH DELETE n', {batchSize:1000})", map[string]interface{}{})
+		if err != nil {
+			return nil, fmt.Errorf("Deleting failed: %w", err)
+		}
+
+		_, err = tx.Run("CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *", map[string]interface{}{})
+		if err != nil {
+			return nil, fmt.Errorf("Asserting schema failed: %w", err)
+		}
+
+		return nil, nil
 	})
 	if err != nil {
 		return fmt.Errorf("Could not clean database: %w", err)
@@ -142,17 +152,6 @@ func (wi *WikidataImporter) RunStage1() error {
 	}
 
 	return nil
-}
-
-func printSnak(snak *mediawiki.Snak) {
-	fmt.Printf("Property: %s\n", snak.Property)
-	fmt.Printf("Type: %v\n", snak.SnakType)
-	fmt.Printf("Data Type: %v\n", *snak.DataType)
-	if snak.DataValue != nil {
-		fmt.Printf("Data Value: %v\n", snak.DataValue.Value)
-	} else {
-		fmt.Printf("Data Value: nil\n")
-	}
 }
 
 func propertyLabelToRelationshipType(propertyLabel string) string {
